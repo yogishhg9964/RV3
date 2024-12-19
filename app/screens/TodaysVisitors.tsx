@@ -1,219 +1,229 @@
-// app/screens/Profile.tsx
-
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { collection, query, where, onSnapshot, orderBy, Timestamp, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs,getDoc, orderBy, doc, updateDoc} from 'firebase/firestore';
 import { db } from '../../FirebaseConfig';
-import { SearchBar } from './components/SearchBar';
+import { SearchBar } from '../components/ui/SearchBar';
+import { VisitorCard } from '../components/visitor/VisitorCard';
+import { format, startOfDay, endOfDay } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
+import CalendarPicker from 'react-native-calendar-picker';
+import { Colors } from '@/constants/Colors';
 
 interface Visitor {
   id: string;
   name: string;
-  contactNumber: string;
+  checkInTime: string;
+  checkOutTime: string | null;
+  purpose: string;
   whomToMeet: string;
   department: string;
-  purposeOfVisit: string;
-  checkInTime: any;
-  checkOutTime: any | null;
-  status: 'In' | 'Out';
+  status: 'In' | 'Out' | 'pending';
+  contactNumber: string;
   visitorPhotoUrl?: string;
+  documentUrl?: string;
   type: string;
-}
-
-function formatTime(time: any): string {
-  if (!time) return 'N/A';
-  
-  try {
-    const date = new Date(time);
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-  } catch (error) {
-    console.error('Error formatting time:', error);
-    return 'Invalid Time';
-  }
+  additionalDetails: any;
 }
 
 export default function TodaysVisitors() {
   const [visitors, setVisitors] = useState<Visitor[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [filteredVisitors, setFilteredVisitors] = useState<Visitor[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [showFilters, setShowFilters] = useState(false);
+  const [selectedStatus, setSelectedStatus] = useState<string[]>([]);
 
   useEffect(() => {
-    const fetchVisitors = async () => {
-      try {
-        // Get today's start timestamp
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        // Get tomorrow's start timestamp
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
+    fetchVisitors(selectedDate);
+  }, [selectedDate]);
 
-        console.log('Fetching visitors between:', today.toISOString(), 'and', tomorrow.toISOString());
+  const fetchVisitors = async (date: Date) => {
+    try {
+      setIsLoading(true);
+      const start = startOfDay(date);
+      const end = endOfDay(date);
 
-        // Reference to visitors collection
-        const visitorsRef = collection(db, 'visitorLogs');
-        
-        // Create query for today's visitors
-        const q = query(
-          visitorsRef,
-          where('checkInTime', '>=', today.toISOString()),
-          where('checkInTime', '<', tomorrow.toISOString())
-        );
+      const visitorRef = collection(db, 'visitors');
+      const q = query(
+        visitorRef,
+        where('checkInTime', '>=', start.toISOString()),
+        where('checkInTime', '<=', end.toISOString()),
+        orderBy('checkInTime', 'desc')
+      );
 
-        // Set up real-time listener
-        const unsubscribe = onSnapshot(q, 
-          (snapshot) => {
-            const visitorData: Visitor[] = [];
-            const seenIds = new Set(); // To prevent duplicates
+      const querySnapshot = await getDocs(q);
+      const visitorData: Visitor[] = [];
 
-            snapshot.forEach((doc) => {
-              const data = doc.data();
-              
-              // Skip if we've already seen this ID
-              if (seenIds.has(doc.id)) return;
-              seenIds.add(doc.id);
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        visitorData.push({
+          id: doc.id,
+          name: data.name || '',
+          checkInTime: data.checkInTime || '',
+          checkOutTime: data.checkOutTime || null,
+          purpose: data.purposeOfVisit || '',
+          whomToMeet: data.additionalDetails?.whomToMeet || '',
+          department: data.additionalDetails?.department || '',
+          status: data.status || 'pending',
+          contactNumber: data.contactNumber || '',
+          visitorPhotoUrl: data.additionalDetails?.visitorPhotoUrl || '',
+          documentUrl: data.additionalDetails?.documentUrl || '',
+          type: data.type || 'visitor',
+          additionalDetails: data.additionalDetails || {}
+        });
+      });
 
-              // Only add if it's a valid visitor entry
-              if (data.name && data.checkInTime) {
-                visitorData.push({
-                  id: doc.id,
-                  name: data.name,
-                  contactNumber: data.contactNumber || '',
-                  whomToMeet: data.whomToMeet || '',
-                  department: data.department || '',
-                  purposeOfVisit: data.purposeOfVisit || '',
-                  checkInTime: data.checkInTime,
-                  checkOutTime: data.checkOutTime || null,
-                  status: data.status || 'In',
-                  visitorPhotoUrl: data.visitorPhotoUrl || '',
-                  type: data.type || 'visitor'
-                });
-              }
-            });
-            
-            // Sort by check-in time in descending order
-            visitorData.sort((a, b) => {
-              const timeA = new Date(a.checkInTime).getTime();
-              const timeB = new Date(b.checkInTime).getTime();
-              return timeB - timeA;
-            });
+      setVisitors(visitorData);
+      setFilteredVisitors(visitorData);
+    } catch (error) {
+      console.error('Error fetching visitors:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-            console.log('Fetched unique visitors:', visitorData.length);
-            setVisitors(visitorData);
-            setIsLoading(false);
-          },
-          (error) => {
-            console.error('Error fetching visitors:', error);
-            setIsLoading(false);
-          }
-        );
-
-        return () => unsubscribe();
-      } catch (error) {
-        console.error('Error in fetchVisitors:', error);
-        setIsLoading(false);
+  const handleCheckOut = async (visitorId: string) => {
+    try {
+      const visitorRef = doc(db, 'visitors', visitorId);
+      const checkOutTime = new Date().toISOString();
+      
+      const visitorDoc = await getDoc(visitorRef);
+      if (!visitorDoc.exists()) {
+        throw new Error('Visitor not found');
       }
-    };
 
-    fetchVisitors();
-  }, []);
+      const visitorData = visitorDoc.data();
+      
+      const updateData = {
+        status: 'Out',
+        checkOutTime: checkOutTime,
+        lastUpdated: checkOutTime,
+        additionalDetails: {
+          ...(visitorData.additionalDetails || {}),
+          checkOutTime: checkOutTime
+        }
+      };
 
-  const filteredVisitors = visitors.filter(visitor => 
-    visitor.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    visitor.contactNumber.includes(searchQuery) ||
-    visitor.whomToMeet.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    visitor.department.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+      await updateDoc(visitorRef, updateData);
+
+    } catch (error) {
+      console.error('Error checking out visitor:', error);
+    }
+  };
+
+  // Search and filter functionality
+  useEffect(() => {
+    let filtered = [...visitors];
+
+    // Apply search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(visitor => 
+        visitor.name.toLowerCase().includes(query) ||
+        visitor.contactNumber.includes(query) ||
+        visitor.whomToMeet.toLowerCase().includes(query) ||
+        visitor.department.toLowerCase().includes(query)
+      );
+    }
+
+    // Apply status filter
+    if (selectedStatus.length > 0) {
+      filtered = filtered.filter(visitor => 
+        selectedStatus.includes(visitor.status)
+      );
+    }
+
+    setFilteredVisitors(filtered);
+  }, [searchQuery, visitors, selectedStatus]);
 
   const renderVisitorCard = ({ item: visitor }: { item: Visitor }) => (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <View style={styles.visitorInfo}>
-          {visitor.visitorPhotoUrl ? (
-            <Image 
-              source={{ uri: visitor.visitorPhotoUrl }} 
-              style={styles.visitorPhoto}
-            />
-          ) : (
-            <View style={styles.visitorPhotoPlaceholder}>
-              <Ionicons name="person" size={24} color="#6B46C1" />
-            </View>
-          )}
-          <View>
-            <Text style={styles.visitorName}>{visitor.name}</Text>
-            <Text style={styles.visitorContact}>{visitor.contactNumber}</Text>
-          </View>
-        </View>
-        <View style={[
-          styles.statusBadge,
-          visitor.status === 'In' ? styles.statusIn : styles.statusOut
-        ]}>
-          <Text style={[
-            styles.statusText,
-            { color: visitor.status === 'In' ? '#15803D' : '#B91C1C' }
-          ]}>
-            {visitor.status}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.cardDetails}>
-        <DetailRow icon="time" label="Check In" value={formatTime(visitor.checkInTime)} />
-        <DetailRow icon="business" label="Department" value={visitor.department} />
-        <DetailRow icon="person" label="Meeting" value={visitor.whomToMeet} />
-        <DetailRow icon="document-text" label="Purpose" value={visitor.purposeOfVisit} />
-      </View>
-    </View>
+    <VisitorCard 
+      visitor={visitor}
+      onCheckOut={handleCheckOut}
+    />
   );
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+      <View style={styles.content}>
         <View style={styles.searchContainer}>
-          <SearchBar
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Search visitors..."
-            style={styles.searchBar}
-          />
+          <View style={styles.searchRow}>
+            <SearchBar
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search visitors..."
+              style={styles.searchBar}
+            />
+          </View>
+          
+          <TouchableOpacity 
+  style={styles.dateSelector}
+  onPress={() => setShowCalendar(true)}
+  activeOpacity={0.7}
+>
+  <View style={styles.dateSelectorContent}>
+    <Ionicons name="calendar" size={20} color={Colors.PRIMARY} />
+    <Text style={styles.dateText}>
+      {format(selectedDate, 'MMMM dd, yyyy')}
+    </Text>
+    <Ionicons name="chevron-down" size={20} color={Colors.PRIMARY} />
+  </View>
+</TouchableOpacity>
         </View>
+
+        {isLoading ? (
+          <View style={styles.centerContent}>
+            <ActivityIndicator size="large" color="#6B46C1" />
+          </View>
+        ) : filteredVisitors.length > 0 ? (
+          <FlatList
+            data={filteredVisitors}
+            renderItem={renderVisitorCard}
+            keyExtractor={item => item.id}
+            contentContainerStyle={styles.listContainer}
+            showsVerticalScrollIndicator={false}
+          />
+        ) : (
+          <View style={styles.centerContent}>
+            <Text style={styles.noVisitorsText}>
+              {searchQuery ? 'No matching visitors found' : 'No visitors found for selected date'}
+            </Text>
+          </View>
+        )}
       </View>
 
-      {isLoading ? (
-        <View style={styles.centerContent}>
-          <ActivityIndicator size="large" color="#6B46C1" />
+      {/* Calendar Modal */}
+      <Modal
+        visible={showCalendar}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCalendar(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.calendarContainer}>
+            <View style={styles.calendarHeader}>
+              <Text style={styles.calendarTitle}>Select Date</Text>
+              <TouchableOpacity onPress={() => setShowCalendar(false)}>
+                <Ionicons name="close" size={24} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            <CalendarPicker
+              onDateChange={(date) => {
+                setSelectedDate(new Date(date as Date));
+                setShowCalendar(false);
+              }}
+              selectedStartDate={selectedDate}
+              width={300}
+              selectedDayColor={Colors.PRIMARY}
+              selectedDayTextColor="#FFFFFF"
+            />
+          </View>
         </View>
-      ) : filteredVisitors.length > 0 ? (
-        <FlatList
-          data={filteredVisitors}
-          renderItem={renderVisitorCard}
-          keyExtractor={item => item.id}
-          contentContainerStyle={styles.listContainer}
-          showsVerticalScrollIndicator={false}
-        />
-      ) : (
-        <View style={styles.centerContent}>
-          <Ionicons name="people" size={48} color="#9CA3AF" />
-          <Text style={styles.noVisitorsText}>No visitors today</Text>
-        </View>
-      )}
+      </Modal>
     </SafeAreaView>
-  );
-}
-
-function DetailRow({ icon, label, value }: { icon: string; label: string; value: string }) {
-  return (
-    <View style={styles.detailRow}>
-      <Ionicons name={icon as any} size={16} color="#6B46C1" style={styles.detailIcon} />
-      <Text style={styles.detailLabel}>{label}:</Text>
-      <Text style={styles.detailValue}>{value}</Text>
-    </View>
   );
 }
 
@@ -222,13 +232,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  header: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+  content: {
+    flex: 1,
   },
   searchContainer: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -236,98 +248,95 @@ const styles = StyleSheet.create({
   searchBar: {
     flex: 1,
   },
-  listContainer: {
-    padding: 16,
-    gap: 16,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  visitorInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  visitorPhoto: {
+  filterButton: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-  },
-  visitorPhotoPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#F3F0FF',
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
-  visitorName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2937',
-  },
-  visitorContact: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  statusIn: {
-    backgroundColor: '#DEF7EC',
-  },
-  statusOut: {
-    backgroundColor: '#FEE2E2',
-  },
-  statusText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  cardDetails: {
-    gap: 8,
-  },
-  detailRow: {
+  dateSelector: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    marginTop: 12,
+    padding: 8,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
   },
-  detailIcon: {
-    width: 20,
-  },
-  detailLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-    width: 80,
-  },
-  detailValue: {
-    fontSize: 14,
-    color: '#1F2937',
-    flex: 1,
+  dateText: {
+    fontSize: 16,
+    color: '#374151',
+    fontWeight: '500',
   },
   centerContent: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 12,
+  },
+  listContainer: {
+    padding: 16,
   },
   noVisitorsText: {
     fontSize: 16,
-    color: '#9CA3AF',
+    fontWeight: '500',
+    color: '#6B7280',
+    textAlign: 'center',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  calendarContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+  },
+  calendarHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  calendarTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  dateSelector: {
+    marginTop: 16,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  
+  dateSelectorContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  
+  dateText: {
+    flex: 1,
+    fontSize: 16,
+    color: '#374151',
+    fontWeight: '500',
+    marginLeft: 12,
   },
 });

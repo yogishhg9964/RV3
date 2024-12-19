@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, Alert,TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SearchBar } from '../components/ui/SearchBar';
 import { FilterSidebar } from './components/FilterSideBar';
 import { collection, query, orderBy, doc, updateDoc, onSnapshot, getDoc } from 'firebase/firestore';
 import { db } from '../../FirebaseConfig';
 import { VisitorCard } from '../components/visitor/VisitorCard';
+import { Ionicons } from '@expo/vector-icons';
 
 interface VisitorLogData {
   id: string;
@@ -35,6 +36,7 @@ export default function VisitorLog() {
     sortBy: null,
     sortOrder: 'asc' as const,
   });
+  const [filteredVisitors, setFilteredVisitors] = useState<VisitorLogData[]>([]);
 
   useEffect(() => {
     setIsLoading(true);
@@ -70,6 +72,7 @@ export default function VisitorLog() {
         });
 
         setVisitors(visitorData);
+        setFilteredVisitors(visitorData);
         setIsLoading(false);
       },
       (error) => {
@@ -81,6 +84,54 @@ export default function VisitorLog() {
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    let result = [...visitors];
+
+    if (searchQuery) {
+      const searchLower = searchQuery.toLowerCase();
+      result = result.filter(
+        visitor =>
+          visitor.name.toLowerCase().includes(searchLower) ||
+          visitor.contactNumber.includes(searchQuery)
+      );
+    }
+
+    if (selectedFilters.status.length > 0) {
+      result = result.filter(visitor =>
+        selectedFilters.status.includes(visitor.status)
+      );
+    }
+
+    if (selectedFilters.department.length > 0) {
+      result = result.filter(visitor =>
+        selectedFilters.department.includes(visitor.department)
+      );
+    }
+
+    if (selectedFilters.sortBy) {
+      result.sort((a, b) => {
+        switch (selectedFilters.sortBy) {
+          case 'checkInTime':
+            return new Date(a.checkInTime).getTime() - new Date(b.checkInTime).getTime();
+          case 'name':
+            return a.name.localeCompare(b.name);
+          case 'status':
+            return a.status.localeCompare(b.status);
+          case 'department':
+            return a.department.localeCompare(b.department);
+          default:
+            return 0;
+        }
+      });
+
+      if (selectedFilters.sortOrder === 'desc') {
+        result.reverse();
+      }
+    }
+
+    setFilteredVisitors(result);
+  }, [searchQuery, selectedFilters, visitors]);
 
   const handleCheckOut = async (visitorId: string) => {
     try {
@@ -130,6 +181,12 @@ export default function VisitorLog() {
             placeholder="Search visitors..."
             style={styles.searchBar}
           />
+          <TouchableOpacity 
+            onPress={() => setIsFilterOpen(!isFilterOpen)}
+            style={styles.filterButton}
+          >
+            <Ionicons name="filter" size={24} color="#374151" />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -137,9 +194,9 @@ export default function VisitorLog() {
         <View style={styles.centerContent}>
           <ActivityIndicator size="large" color="#6B46C1" />
         </View>
-      ) : visitors.length > 0 ? (
+      ) : filteredVisitors.length > 0 ? (
         <FlatList
-          data={visitors}
+          data={filteredVisitors}
           renderItem={renderVisitorCard}
           keyExtractor={item => item.id}
           contentContainerStyle={styles.listContainer}
@@ -192,5 +249,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: '#6B7280',
+  },
+  filterButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
 });
